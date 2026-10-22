@@ -1,0 +1,186 @@
+[project]
+name = "s3-archive"
+description = "Streaming S3 archive operations (extract / create / list) without local disk."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "University of Washington" }]
+# Version is derived from git tags by hatch-vcs (see [tool.hatch.*] below)
+# so `bump-version` is the single source of truth.
+dynamic = ["version"]
+dependencies = [
+    "boto3>=1.35",
+    "indexed-gzip>=1.8",
+    "py7zr>=1.0,<2.0",
+    "python-dotenv>=1.0",
+    "python-xz>=0.6.0",
+    "questionary>=2.0",
+    "stream-unzip>=0.0.71",
+    "stream-zip>=0.0.73",
+    "tqdm>=4.67",
+    "zstandard>=0.22",
+]
+
+[project.scripts]
+s3-archive = "s3_archive.cli:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6",
+    "pyright>=1.1",
+    "vulture>=2.15",
+    "bandit[toml]>=1.7",
+    "detect-secrets>=1.5",
+    "fileplan==0.8.0",
+]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "moto[s3,server]>=5.0",
+]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+# Used when no git tags are present yet (e.g. fresh clone before the
+# first `bump-version`). Anything > the latest published version so
+# pip's resolver still treats a dev install as "newer than installed".
+fallback-version = "0.0.0+unknown"
+
+[tool.hatch.build.hooks.vcs]
+# hatch-vcs writes the resolved version here on every build so the
+# runtime can read it without re-shelling out to git.
+version-file = "src/s3_archive/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/s3_archive"]
+
+[tool.uv]
+# Local-only tool: keep everything available after `uv sync` per PYTHON.md §6.
+default-groups = ["dev", "test"]
+
+[tool.ruff]
+line-length = 100
+# mdformat owns Markdown (`make format-docs`). ruff's preview formatter
+# rewrites Python fences inside .md, so excluding .md keeps the two
+# formatters from contending over docs. See PYTHON.md §14.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+# Categories deliberately left out of `select` (PYTHON.md §14 asks for the
+# rationale in-file):
+# - TRY (tryceratops): almost entirely TRY003, "long message outside the
+#   exception class". The exceptions in s3_archive.exceptions carry per-call
+#   context — which key, which offset — in the message on purpose.
+# - PLR (pylint refactor): PLR0913 fires on the streaming entry points
+#   (extract / create / iter_*), whose long keyword-argument lists are the
+#   public API. C90 below already bounds complexity, which is the part worth
+#   gating. PLR's `max-args`/`max-statements` knobs match ruff's own defaults,
+#   so no [tool.ruff.lint.pylint] section is carried for them.
+# `preview` stays off: its one rationale is PLR0904, which this PL-subset
+# select never reaches, and at 2026-09-23 it adds 24 findings (23 test-side,
+# mostly PLC2701 private imports) and nothing wanted (PYTHON.md §14).
+select = [
+    "A",      # flake8-builtins
+    "ARG",    # flake8-unused-arguments
+    "B",      # flake8-bugbear
+    "BLE",    # flake8-blind-except
+    "C90",    # mccabe complexity
+    "E",      # pycodestyle errors
+    "ERA",    # eradicate
+    "F",      # pyflakes
+    "FBT",    # flake8-boolean-trap
+    "N",      # pep8-naming
+    "S",      # flake8-bandit
+    "SIM",    # flake8-simplify
+    "T20",    # flake8-print
+    "UP",     # pyupgrade
+    "W",      # pycodestyle warnings
+    "PLC",
+    "PLE",
+    "PLW",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101",    # assert in tests
+    "ARG001",
+    "ARG002",
+    "ARG005",  # unused lambda args in fixtures/monkeypatches are unavoidable
+    "S105",
+    "S106",
+    "S107",    # hardcoded "password" defaults — fixture knobs, not real creds
+    "T20",
+    "PLW0603",
+]
+"src/s3_archive/cli.py" = [
+    "T20",     # CLI prints to user
+]
+"src/s3_archive/config_cmd.py" = [
+    "T20",     # interactive CLI subcommand prints to user
+]
+"src/s3_archive/ls.py" = [
+    "T20",     # CLI subcommand prints archive listing
+]
+"src/s3_archive/create.py" = [
+    "BLE001",  # BaseException catch in writer thread to prevent deadlock
+]
+
+[tool.bandit]
+exclude_dirs = [".venv", "tests"]
+# SECURITY 4b wants each skip paired with the ruff per-file-ignore it mirrors.
+# None of these three has one: B101 (no production asserts; ruff's S101 is
+# clean on src/), B324 (usedforsecurity=False already clears ruff's S324;
+# bandit still flags the md5/sha1 calls in hashing.py), and B105 (below) all
+# stand on bandit's own say-so, not a call already taken at the ruff layer.
+skips = [
+    "B101",  # assert noise skip; no ruff ignore to pair with (see above)
+    "B324",  # md5/sha1 for legacy archive metadata; no ruff ignore to pair with (see above)
+    "B105",  # config_cmd.py:319 secret_key="" prompt-loop sentinel (SECURITY 4b, answer a2, family 77);
+             # ruff's S105 excludes empty-string literals and never fires here — no ruff ignore to pair with
+]
+
+[tool.pysmelly]
+# Exclude tests, consistent with the maintainer's other Python projects,
+# so counts measure the same surface. Loaded
+# only when pysmelly runs from the repo root. pysmelly has no default
+# exclude list (its CLI merges this list with an empty default), so this
+# line is the whole scope rule. `tests/` works as a trailing-slash pattern
+# because the test tree is top-level; `conftest.py` names any conftest
+# outside tests/ as test code as well. The cost is test-blindness: public
+# API whose only in-repo callers are tests now reads as dead —
+# docs/PYSMELLY.md records the measured delta. No `skip` list: suppressing
+# a production category is not how this repo works.
+exclude = ["tests/", "test_*", "conftest.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "--strict-markers -ra --tb=short"
+
+[tool.coverage.run]
+# `src`, not `src/s3_archive`: a second top-level package added under src/
+# would otherwise be measured at zero and never noticed (PYTHON-TESTING.md §6).
+source = ["src"]
+branch = true
+omit = ["*/__init__.py"]
+
+[tool.coverage.report]
+# `make test-cov` measured TOTAL 95.57% on 2026-09-23 (548 passed, 0 skipped;
+# 7-Zip as `7zz` and `xz` both on PATH). The floor is a floor, not a target:
+# it sits ~3 points below the measurement (as onboarding set 90 against 93) so
+# ordinary churn doesn't trip the gate while it stays a real assertion. When
+# coverage moves durably, move the floor with it and re-date this comment.
+fail_under = 92
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+show_missing = true
