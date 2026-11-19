@@ -18,6 +18,7 @@ work lives in the matching modules.
 """
 
 import argparse
+import io
 import sys
 from pathlib import Path
 
@@ -39,7 +40,7 @@ from s3_archive.extract import ExtractReport, extract_with_report
 from s3_archive.list import list_objects
 from s3_archive.log_config import get_logger, resolve_level, resolve_root_level, setup_console
 from s3_archive.ls import list_archive
-from s3_archive.s3_client import client_for
+from s3_archive.s3_client import DEFAULT_PROFILE, client_for
 from s3_archive.url import detect_format, parse_s3_prefix, parse_s3_url
 
 log = get_logger(__name__)
@@ -220,7 +221,7 @@ def _add_config_parser(sub: argparse._SubParsersAction) -> None:
     )
     p_config.add_argument(
         "--profile",
-        default="default",
+        default=DEFAULT_PROFILE,
         type=_argparse_profile,
         help=(
             "Profile name to configure. Default profile writes ~/.s3cfg; "
@@ -408,7 +409,23 @@ def _cmd_config(args: argparse.Namespace) -> int:
     return run_config(tool_name="s3-archive", profile=args.profile)
 
 
+def _utf8_streams() -> None:
+    """Make stdout and stderr write UTF-8 whatever the host locale says.
+
+    Member names and S3 keys are user text: `ls` prints them to stdout,
+    and an inherited ASCII or Latin-1 stream raises UnicodeEncodeError on
+    the first CJK name. Only the encoding changes —
+    each stream keeps its error handler (stderr's backslashreplace, a C
+    locale's surrogateescape). A stream that is not a TextIOWrapper (a
+    caller's StringIO redirect) has no encoding to set and is left alone.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors=stream.errors)
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_streams()
     # Load .env from CWD if present — operators frequently invoke from
     # the repo directory; CI / Docker should rely on the real environment.
     env_path = Path(".env")

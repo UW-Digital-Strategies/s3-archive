@@ -206,15 +206,9 @@ class HashingTap:
         self._update_hashes(data)
         return data
 
-    # File-object protocol, called by s3transfer and the stdlib readers, never by
-    # name here, so pysmelly sees no caller. re-evaluate-by: next comprehensive review.
-    # pysmelly: ignore[trivial-wrappers]  # noqa: ERA001
     def readable(self) -> bool:
         return True
 
-    # File-object protocol, called by s3transfer and the stdlib readers, never by
-    # name here, so pysmelly sees no caller. re-evaluate-by: next comprehensive review.
-    # pysmelly: ignore[trivial-wrappers]  # noqa: ERA001
     def seekable(self) -> bool:
         return False
 

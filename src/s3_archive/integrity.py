@@ -95,3 +95,13 @@ class Crc32Counter:
             self.crc32 = zlib.crc32(chunk, self.crc32)
             self.size += len(chunk)
             yield chunk
+
+    def mismatch(self, check: str, *, expected_crc32: int, expected_size: int) -> IntegrityMismatch:
+        """The :class:`IntegrityMismatch` for *check*, with this counter's totals as actuals."""
+        return IntegrityMismatch(
+            check=check,
+            expected_crc32=expected_crc32,
+            actual_crc32=self.crc32,
+            expected_size=expected_size,
+            actual_size=self.size,
+        )

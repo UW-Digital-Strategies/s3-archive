@@ -7,12 +7,17 @@ make assertions on the prompt text without spinning up a fake TTY.
 """
 
 import configparser
+import os
+import stat
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
-from s3_archive import config_cmd
+from s3_archive import config_cmd, s3_client
 from s3_archive.exceptions import ConfigError
+
+from .fixture_values import CONFIG_PROMPT_ACCESS_KEY, CONFIG_PROMPT_SECRET_KEY
 
 # A minimal but complete s3cmd INI, used wherever a test needs a
 # pre-existing config on disk for the early-detect path to find.
@@ -45,9 +50,9 @@ def cfg_path(home) -> Path:
 def _drive_prompts(
     monkeypatch,
     *,
-    text: list[str] = (),
-    passwords: list[str] = (),
-    confirms: list[bool] = (),
+    text: Sequence[str] = (),
+    passwords: Sequence[str] = (),
+    confirms: Sequence[bool] = (),
 ) -> list[str]:
     """Patch the three `_ask_*` helpers to consume scripted answers.
 
@@ -83,7 +88,7 @@ def _drive_prompts(
     return seen_text_defaults
 
 
-def _stub_connect(monkeypatch, results: list[str | None]) -> None:
+def _stub_connect(monkeypatch, results: Sequence[str | None]) -> None:
     """Patch the pre-write connection check to hand back scripted results.
 
     The real `_try_connect` reaches into boto3; unit tests script it
@@ -104,10 +109,10 @@ def _stub_connect(monkeypatch, results: list[str | None]) -> None:
 def _run_config_ok(
     monkeypatch,
     *,
-    text: list[str] = (),
-    passwords: list[str] = (),
-    confirms: list[bool] = (),
-    connect: list[str | None] = (None,),
+    text: Sequence[str] = (),
+    passwords: Sequence[str] = (),
+    confirms: Sequence[bool] = (),
+    connect: Sequence[str | None] = (None,),
     **run_kwargs,
 ) -> list[str]:
     """Script the prompts and the connection check, run, assert a clean exit.
@@ -151,20 +156,55 @@ class TestValidateProfileName:
             config_cmd.validate_profile_name(name)
 
 
-class TestDefaultPathForProfile:
-    def test_default_maps_to_s3cfg(self):
-        assert config_cmd._default_path_for("default") == "~/.s3cfg"
+class TestS3cfgPathForProfile:
+    def test_default_maps_to_s3cfg(self, home):
+        assert s3_client.s3cfg_path("default") == home / ".s3cfg"
 
     @pytest.mark.parametrize(
         "profile,expected",
         [
-            ("ceph-server", "~/.s3cfg-ceph-server"),
-            ("aws-prsv", "~/.s3cfg-aws-prsv"),
-            ("team_a", "~/.s3cfg-team_a"),
+            ("ceph-server", ".s3cfg-ceph-server"),
+            ("aws-prsv", ".s3cfg-aws-prsv"),
+            ("team_a", ".s3cfg-team_a"),
         ],
     )
-    def test_named_profile(self, profile, expected):
-        assert config_cmd._default_path_for(profile) == expected
+    def test_named_profile(self, home, profile, expected):
+        assert s3_client.s3cfg_path(profile) == home / expected
+
+
+class TestWriterMatchesReader:
+    """`config` writes to the path the runtime loader reads, in every branch.
+
+    The loader's choice is observed by recording the path it hands to
+    the INI parser; every candidate file exists, so the loader's own
+    precedence picks one rather than a missing file deciding for it.
+    """
+
+    @pytest.mark.parametrize(
+        "profile,s3cmd_config",
+        [
+            pytest.param("default", None, id="default-env-unset"),
+            pytest.param("default", "explicit.cfg", id="default-env-set"),
+            pytest.param("ceph-server", "explicit.cfg", id="named-env-ignored"),
+        ],
+    )
+    def test_canonical_path_is_the_loaded_path(self, home, monkeypatch, profile, s3cmd_config):
+        for name in (".s3cfg", ".s3cfg-ceph-server", "explicit.cfg"):
+            (home / name).write_text("", encoding="utf-8")
+        if s3cmd_config is not None:
+            monkeypatch.setenv("S3CMD_CONFIG", str(home / s3cmd_config))
+
+        loaded: list[Path] = []
+
+        def record(cfg_path: str):
+            loaded.append(Path(cfg_path))
+            raise ConfigError("stop after resolution")
+
+        monkeypatch.setattr(s3_client, "_from_s3cmd_config", record)
+        with pytest.raises(ConfigError, match="stop after resolution"):
+            s3_client.load_client(profile)
+
+        assert loaded == [config_cmd._canonical_config_path(profile)]
 
 
 class TestCanonicalConfigPath:
@@ -198,14 +238,14 @@ class TestRunConfigHappyPath:
     ):
         _run_config_ok(
             monkeypatch,
-            text=[endpoint, "ACCESS123", str(cfg_path)],
-            passwords=["SECRET456"],
+            text=[endpoint, CONFIG_PROMPT_ACCESS_KEY, str(cfg_path)],
+            passwords=[CONFIG_PROMPT_SECRET_KEY],
         )
 
         assert cfg_path.exists()
         section = _read_default_section(cfg_path)
-        assert section["access_key"] == "ACCESS123"
-        assert section["secret_key"] == "SECRET456"
+        assert section["access_key"] == CONFIG_PROMPT_ACCESS_KEY
+        assert section["secret_key"] == CONFIG_PROMPT_SECRET_KEY
         assert section.get("host_base") == expected_host_base
         # The AWS-defaults hint fires exactly when no host_base was written.
         aws_note_shown = "AWS S3 defaults" in capsys.readouterr().out
@@ -274,7 +314,7 @@ class TestToolNameInPrompt:
 
 class TestRunConfigOverwriteGuard:
     def test_existing_file_overwrite_declined(self, monkeypatch, cfg_path, capsys):
-        cfg_path.write_text("# original content\n")
+        cfg_path.write_text("# original content\n", encoding="utf-8")
         original_mtime = cfg_path.stat().st_mtime
 
         _run_config_ok(
@@ -285,12 +325,12 @@ class TestRunConfigOverwriteGuard:
         )
 
         # File untouched.
-        assert cfg_path.read_text() == "# original content\n"
+        assert cfg_path.read_text(encoding="utf-8") == "# original content\n"
         assert cfg_path.stat().st_mtime == original_mtime
         assert "Aborted" in capsys.readouterr().out
 
     def test_existing_file_overwrite_accepted(self, monkeypatch, cfg_path):
-        cfg_path.write_text("# original content\n")
+        cfg_path.write_text("# original content\n", encoding="utf-8")
 
         _run_config_ok(
             monkeypatch,
@@ -300,6 +340,39 @@ class TestRunConfigOverwriteGuard:
         )
 
         assert _read_default_section(cfg_path)["access_key"] == "ACCESS"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+class TestWriteConfigModeBeforeSecret:
+    """The file is 0600 when the secret goes in, not narrowed after it."""
+
+    @pytest.mark.parametrize("existing_mode", [None, 0o644], ids=["new-file", "existing-0644"])
+    def test_mode_is_0600_while_secret_written(self, monkeypatch, cfg_path, existing_mode):
+        if existing_mode is not None:
+            cfg_path.write_text("# original content\n", encoding="utf-8")
+            cfg_path.chmod(existing_mode)
+        modes_at_write: list[int] = []
+        real_write = configparser.ConfigParser.write
+
+        def recording_write(self, fp, *args, **kwargs):
+            modes_at_write.append(stat.S_IMODE(os.stat(cfg_path).st_mode))
+            return real_write(self, fp, *args, **kwargs)
+
+        monkeypatch.setattr(configparser.ConfigParser, "write", recording_write)
+        old_umask = os.umask(0o022)
+        try:
+            config_cmd._write_config(
+                cfg_path,
+                access_key=CONFIG_PROMPT_ACCESS_KEY,
+                secret_key=CONFIG_PROMPT_SECRET_KEY,
+                host_base="",
+            )
+        finally:
+            os.umask(old_umask)
+
+        assert modes_at_write == [0o600]
+        assert stat.S_IMODE(cfg_path.stat().st_mode) == 0o600
+        assert _read_default_section(cfg_path)["secret_key"] == CONFIG_PROMPT_SECRET_KEY
 
 
 class TestEndpointToHostBase:
@@ -352,13 +425,13 @@ class TestEarlyDetectExistingConfig:
         self, home, monkeypatch, capsys, filename, contents, profile, expected_host
     ):
         existing = home / filename
-        existing.write_text(contents)
+        existing.write_text(contents, encoding="utf-8")
         original_mtime = existing.stat().st_mtime
 
         _run_config_ok(monkeypatch, confirms=[False], profile=profile)
 
         out = capsys.readouterr().out
-        assert existing.read_text() == contents
+        assert existing.read_text(encoding="utf-8") == contents
         assert existing.stat().st_mtime == original_mtime
         assert "already exists" in out
         assert "Keeping existing configuration" in out
@@ -374,9 +447,9 @@ class TestEarlyDetectRespectsS3CMDConfig:
 
     def test_existing_s3cmd_config_takes_precedence_over_default(self, home, monkeypatch, capsys):
         # Both files exist; $S3CMD_CONFIG should win.
-        (home / ".s3cfg").write_text(_EXISTING_INI.format(host="default.example"))
+        (home / ".s3cfg").write_text(_EXISTING_INI.format(host="default.example"), encoding="utf-8")
         explicit = home / "explicit.cfg"
-        explicit.write_text(_EXISTING_INI.format(host="explicit.example"))
+        explicit.write_text(_EXISTING_INI.format(host="explicit.example"), encoding="utf-8")
         monkeypatch.setenv("S3CMD_CONFIG", str(explicit))
 
         _run_config_ok(monkeypatch, confirms=[False])  # decline early-detect
@@ -395,7 +468,7 @@ class TestEarlyDetectRespectsS3CMDConfig:
         assert not target.exists()
         # Even if ~/.s3cfg exists, the env-var path wins precedence and
         # the env-var path doesn't exist — so no early-detect prompt.
-        (home / ".s3cfg").write_text(_EXISTING_INI.format(host="nope"))
+        (home / ".s3cfg").write_text(_EXISTING_INI.format(host="nope"), encoding="utf-8")
 
         _run_config_ok(
             monkeypatch,
@@ -598,7 +671,7 @@ class TestResolvePathDoesNotFollowSymlinks:
     def test_symlink_displayed_as_typed(self, tmp_path):
         # ~/.s3cfg → /some/real/file is the surprising case the operator hit.
         real = tmp_path / "real-config.cfg"
-        real.write_text("real")
+        real.write_text("real", encoding="utf-8")
         link = tmp_path / "symlinked-config"
         link.symlink_to(real)
 

@@ -34,12 +34,8 @@ import questionary
 from botocore.exceptions import BotoCoreError, ClientError
 
 from s3_archive.exceptions import ConfigError
-from s3_archive.log_config import get_logger
-from s3_archive.s3_client import build_client
+from s3_archive.s3_client import DEFAULT_PROFILE, build_client, explicit_s3cmd_config, s3cfg_path
 
-log = get_logger(__name__)
-
-_DEFAULT_PROFILE = "default"
 _PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -55,17 +51,6 @@ def validate_profile_name(name: str) -> str:
             f"(letters, digits, underscore, hyphen)."
         )
     return name
-
-
-def _default_path_for(profile: str) -> str:
-    """The s3cmd INI path a given profile writes to / reads from.
-
-    The ``default`` profile maps to ``~/.s3cfg`` to stay compatible with
-    s3cmd; any other profile maps to ``~/.s3cfg-<name>``.
-    """
-    if profile == _DEFAULT_PROFILE:
-        return "~/.s3cfg"
-    return f"~/.s3cfg-{profile}"
 
 
 def _ask_text(question: str, default: str = "") -> str:
@@ -156,11 +141,11 @@ def _canonical_config_path(profile: str) -> Path:
     it is part of the default-profile chain only — and we always return
     ``~/.s3cfg-<name>``.
     """
-    if profile == _DEFAULT_PROFILE:
-        explicit = os.environ.get("S3CMD_CONFIG", "").strip()
-        if explicit:
+    if profile == DEFAULT_PROFILE:
+        explicit = explicit_s3cmd_config()
+        if explicit is not None:
             return _resolve_path(explicit)
-    return _resolve_path(_default_path_for(profile))
+    return s3cfg_path(profile).absolute()
 
 
 def _detect_existing_config(profile: str) -> Path | None:
@@ -195,12 +180,18 @@ def _write_config(path: Path, *, access_key: str, secret_key: str, host_base: st
     if host_base:
         parser["default"]["host_base"] = host_base
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
+    # s3cmd writes 0600 — credentials belong to the user. The mode is set
+    # before the secret is written, never after: a new file is created
+    # 0600 (the umask can only narrow it), and an existing one, which
+    # O_CREAT leaves at its old mode, is narrowed first. Writing and then
+    # chmodding would leave the secret at umask permissions in between.
+    # On platforms where chmod is a no-op (Windows), the OSError is harmless.
+    if path.exists():
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         parser.write(fh)
-    # s3cmd writes 0600 — credentials belong to the user. On platforms
-    # where chmod is a no-op (Windows), the OSError is harmless.
-    with contextlib.suppress(OSError):
-        path.chmod(0o600)
 
 
 def _try_connect(*, access_key: str, secret_key: str, host_base: str) -> str | None:
@@ -235,7 +226,7 @@ def _non_default_path_note(cfg_path: Path, tool_name: str, profile: str) -> None
     re-run. Instead we explain the situation and offer the easy escape
     (use the default path).
     """
-    if profile == _DEFAULT_PROFILE:
+    if profile == DEFAULT_PROFILE:
         print(
             f"Note: {cfg_path} is not the default location (~/.s3cfg). "
             f"Future runs of {tool_name} will only find it if $S3CMD_CONFIG "
@@ -248,7 +239,7 @@ def _non_default_path_note(cfg_path: Path, tool_name: str, profile: str) -> None
         # Named profile written somewhere other than ~/.s3cfg-<name>:
         # the runtime resolver reads ~/.s3cfg-<name> exclusively, so the
         # operator has to symlink or re-run with the default path.
-        default_for_profile = _resolve_path(_default_path_for(profile))
+        default_for_profile = s3cfg_path(profile).absolute()
         print(
             f"Note: {cfg_path} is not the default location ({default_for_profile}) "
             f"for profile {profile!r}. The named-profile resolver in {tool_name} "
@@ -261,10 +252,11 @@ def _non_default_path_note(cfg_path: Path, tool_name: str, profile: str) -> None
 
 # Complexity 18: an interactive wizard — each prompt contributes a
 # validate/retry branch, and the re-ask loops nest. Parked at onboarding
-# (2026-08-13); re-evaluate-by: 2026-11 review. Ledger:
-# docs/HOWTO-SIMPLIFY.md.
+# (2026-08-13); re-evaluated 2026-11-17, still parked (complexity
+# unchanged, prompts are the shape); re-evaluate-by: 2027-05 review.
+# Ledger: docs/HOWTO-SIMPLIFY.md.
 def run_config(  # noqa: C901
-    *, tool_name: str = "s3-archive", profile: str = _DEFAULT_PROFILE
+    *, tool_name: str = "s3-archive", profile: str = DEFAULT_PROFILE
 ) -> int:
     """Drive the interactive prompts; return the CLI exit code.
 
@@ -275,7 +267,7 @@ def run_config(  # noqa: C901
     """
     validate_profile_name(profile)
 
-    if profile == _DEFAULT_PROFILE:
+    if profile == DEFAULT_PROFILE:
         print(f"Configure S3 credentials for {tool_name}.")
     else:
         print(f"Configure S3 credentials for {tool_name} (profile {profile!r}).")
@@ -367,6 +359,6 @@ def run_config(  # noqa: C901
             f"(No endpoint set; using AWS S3 defaults. To target a non-AWS endpoint "
             f"later, edit `host_base` in the file or rerun `{tool_name} config`.)"
         )
-    if cfg_path != _resolve_path(_default_path_for(profile)):
+    if cfg_path != s3cfg_path(profile).absolute():
         _non_default_path_note(cfg_path, tool_name, profile)
     return 0

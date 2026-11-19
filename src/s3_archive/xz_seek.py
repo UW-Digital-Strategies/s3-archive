@@ -25,13 +25,17 @@ from __future__ import annotations
 import contextlib
 import tarfile
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 from s3_archive.exceptions import ResumeUnsupportedError
 from s3_archive.members import ArchiveMember
 from s3_archive.seekable import iter_tar_members_seekable
 
+if TYPE_CHECKING:
+    from xz import XZFile
 
-def open_tar_xz_seekable(source_fileobj) -> tuple[object, Iterator[ArchiveMember]]:
+
+def open_tar_xz_seekable(source_fileobj) -> tuple[XZFile, Iterator[ArchiveMember]]:
     """Open a multi-block xz-compressed tar as a per-member-seekable iterator.
 
     *source_fileobj* is a seekable file object over the compressed archive.

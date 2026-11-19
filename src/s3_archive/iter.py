@@ -20,20 +20,14 @@ class NonSeekableReader:
     def __init__(self, source) -> None:
         self._source = source
 
-    def read(self, size: int = -1) -> bytes:
+    def read(self, size: int | None = -1) -> bytes:
         if size is None or size < 0:
             return self._source.read()
         return self._source.read(size)
 
-    # File-object protocol, called by s3transfer and the stdlib readers, never by
-    # name here, so pysmelly sees no caller. re-evaluate-by: next comprehensive review.
-    # pysmelly: ignore[trivial-wrappers]  # noqa: ERA001
     def seekable(self) -> bool:
         return False
 
-    # File-object protocol, called by s3transfer and the stdlib readers, never by
-    # name here, so pysmelly sees no caller. re-evaluate-by: next comprehensive review.
-    # pysmelly: ignore[trivial-wrappers]  # noqa: ERA001
     def readable(self) -> bool:
         return True
 
@@ -45,7 +39,7 @@ class IterableFileobj:
         self._iter = iter(iterable)
         self._buf = b""
 
-    def read(self, size: int = -1) -> bytes:
+    def read(self, size: int | None = -1) -> bytes:
         if size is None or size < 0:
             chunks = [self._buf]
             chunks.extend(self._iter)
@@ -60,15 +54,9 @@ class IterableFileobj:
         self._buf = self._buf[size:]
         return result
 
-    # File-object protocol, called by s3transfer and the stdlib readers, never by
-    # name here, so pysmelly sees no caller. re-evaluate-by: next comprehensive review.
-    # pysmelly: ignore[trivial-wrappers]  # noqa: ERA001
     def seekable(self) -> bool:
         return False
 
-    # File-object protocol, called by s3transfer and the stdlib readers, never by
-    # name here, so pysmelly sees no caller. re-evaluate-by: next comprehensive review.
-    # pysmelly: ignore[trivial-wrappers]  # noqa: ERA001
     def readable(self) -> bool:
         return True
 
@@ -85,7 +73,7 @@ class PipeReader:
     def __init__(self, fobj) -> None:
         self._fobj = fobj
 
-    def read(self, size: int = -1) -> bytes:
+    def read(self, size: int | None = -1) -> bytes:
         if size is None or size < 0:
             return self._fobj.read()
         chunks: list[bytes] = []
@@ -98,14 +86,8 @@ class PipeReader:
             remaining -= len(chunk)
         return b"".join(chunks)
 
-    # File-object protocol, called by s3transfer and the stdlib readers, never by
-    # name here, so pysmelly sees no caller. re-evaluate-by: next comprehensive review.
-    # pysmelly: ignore[trivial-wrappers]  # noqa: ERA001
     def readable(self) -> bool:
         return True
 
-    # File-object protocol, called by s3transfer and the stdlib readers, never by
-    # name here, so pysmelly sees no caller. re-evaluate-by: next comprehensive review.
-    # pysmelly: ignore[trivial-wrappers]  # noqa: ERA001
     def seekable(self) -> bool:
         return False

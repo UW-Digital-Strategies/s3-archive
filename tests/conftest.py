@@ -11,6 +11,7 @@ import zipfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import boto3
 import py7zr
@@ -21,11 +22,10 @@ from py7zr.properties import FILTER_DEFLATE64
 
 from s3_archive.s3_client import _reset_client_cache
 
+from .fixture_values import FAKE_AWS_ACCESS_KEY_ID, FAKE_AWS_SECRET_ACCESS_KEY
+
 
 @pytest.fixture(autouse=True)
-# An `autouse` fixture is never requested by name, and the check never reads
-# the decorator — false positive; evidence and re-evaluate-by in the docstring.
-# pysmelly: ignore[orphaned-test-helpers]  # noqa: ERA001
 def _clear_client_cache():
     """Drop any cached boto3 clients between tests.
 
@@ -33,27 +33,31 @@ def _clear_client_cache():
     for the lifetime of the process. Without this fixture a client
     built against one test's moto context would leak into the next,
     pointing at a torn-down endpoint and producing baffling failures.
-
-    **pysmelly false positive** (`orphaned-test-helpers`). That check
-    decides a fixture is unused purely by whether its name appears as a
-    parameter of some function in a test file; it never reads the
-    decorator's `autouse` argument. An `autouse=True` fixture is never
-    requested by name — that is the whole point of autouse. Evidence:
-    `pytest tests/test_paths.py --setup-show` prints
-    `SETUP F _clear_client_cache` / `TEARDOWN F _clear_client_cache`
-    for all 21 collected tests in that module.
-    re-evaluate-by: 2026-11 review.
     """
     _reset_client_cache()
     yield
     _reset_client_cache()
 
 
+@pytest.fixture(autouse=True)
+def _cwd_outside_repo(tmp_path, monkeypatch):
+    """Run every test from its own empty directory, never the checkout.
+
+    `cli.main()` loads `.env` from the current directory, and `load_dotenv`
+    writes into `os.environ` for the rest of the process. Run from the repo
+    root, a test calling `main()` would load the operator's live `.env`
+    (credentials, `LOG_LEVEL`) and every later test would inherit it.
+    An empty CWD means there is no `.env`
+    to find.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture
 def aws_creds(monkeypatch):
     """Set bogus AWS credentials so moto + boto3 don't try the real chain."""
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", FAKE_AWS_ACCESS_KEY_ID)
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", FAKE_AWS_SECRET_ACCESS_KEY)
     monkeypatch.setenv("AWS_SECURITY_TOKEN", "testing")
     monkeypatch.setenv("AWS_SESSION_TOKEN", "testing")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
@@ -96,8 +100,8 @@ def cross_env_real_endpoints(tmp_path, monkeypatch):
     src_server.start()
     dst_server.start()
     try:
-        src_port = src_server._server.socket.getsockname()[1]
-        dst_port = dst_server._server.socket.getsockname()[1]
+        _, src_port = src_server.get_host_and_port()
+        _, dst_port = dst_server.get_host_and_port()
         src_endpoint = f"http://127.0.0.1:{src_port}"
         dst_endpoint = f"http://127.0.0.1:{dst_port}"
 
@@ -112,15 +116,15 @@ def cross_env_real_endpoints(tmp_path, monkeypatch):
         src_client = boto3.client(
             "s3",
             endpoint_url=src_endpoint,
-            aws_access_key_id="testing",
-            aws_secret_access_key="testing",
+            aws_access_key_id=FAKE_AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=FAKE_AWS_SECRET_ACCESS_KEY,
             region_name="us-east-1",
         )
         dst_client = boto3.client(
             "s3",
             endpoint_url=dst_endpoint,
-            aws_access_key_id="testing",
-            aws_secret_access_key="testing",
+            aws_access_key_id=FAKE_AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=FAKE_AWS_SECRET_ACCESS_KEY,
             region_name="us-east-1",
         )
 
@@ -174,10 +178,15 @@ def _extracted_keys(s3, bucket, prefix):
 # ---------------------------------------------------------------------------
 
 
+# The `tarfile.open` write modes `build_tar` serves, so the type checker can
+# match its overloads.
+TarWriteMode = Literal["w", "w:gz", "w:bz2", "w:xz"]
+
+
 def build_tar(
     files: dict[str, bytes],
     *,
-    mode: str = "w:gz",
+    mode: TarWriteMode = "w:gz",
     wrap_prefix: str = "",
 ) -> bytes:
     """Serialize *files* as a tar archive in memory.

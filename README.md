@@ -33,13 +33,13 @@ irm https://astral.sh/uv/install.ps1 | iex             # Windows PowerShell
 ### Run it from the published git URL
 
 ```
-uvx --from git+https://github.com/borwickatuw/s3-archive s3-archive --help
+uvx --from git+https://github.com/UW-Digital-Strategies/s3-archive s3-archive --help
 ```
 
 Or install as a `uv` tool:
 
 ```
-uv tool install git+https://github.com/borwickatuw/s3-archive
+uv tool install git+https://github.com/UW-Digital-Strategies/s3-archive
 s3-archive --help
 ```
 
@@ -68,7 +68,9 @@ See [`.env.example`](.env.example) for the full resolution order.
 `LOG_LEVEL` sets the same thing from the environment (`-v` wins if both
 are given). Third-party chatter (botocore, urllib3, s3transfer) follows
 a second variable, `LOG_LEVEL_ROOT` (default WARNING, untouched by
-`-v`); `LOG_LEVEL_ROOT=DEBUG` is the wire-level view. An unrecognized
+`-v`); `LOG_LEVEL_ROOT=DEBUG` is the wire-level view, and it prints
+request headers that carry the access key ID and any session token
+([GOVERNANCE §4](docs/GOVERNANCE.md#4-privacy-and-data-protection)). An unrecognized
 name in either exits 2 rather than quietly logging at the default.
 
 ### Multiple S3 providers
@@ -217,6 +219,15 @@ stay clean. Add `-v` for per-file lines alongside the bar.
 > support (e.g. Windows Terminal with Cascadia Mono/Code) if it bothers
 > you.
 
+**Accessibility:** no page or GUI surface; terminal output only. No colour is
+emitted, so no meaning rides on colour, and the bar tests
+`sys.stderr.isatty()`, the stream it draws on.
+
+**Character sets:** UI translation is N/A (no UI); character-set support
+is implemented. `s3-archive` writes stdout and stderr as UTF-8 whatever
+the host locale, so `ls` prints a CJK member name as written rather than
+crashing on an ASCII or Latin-1 terminal.
+
 ## Library use
 
 `s3-archive` is also a Python library:
@@ -328,11 +339,10 @@ reader handles the file fine.
 ### Wrap `SeekableS3Object` via `open_seekable()`, not by hand
 
 A bare `io.BufferedReader(SeekableS3Object(...))` gets BufferedReader's
-default 8 KiB buffer — one ranged GET per 8 KiB of body. On a 105 MB
-zip that was ~13,000 requests and 270 s, 40-70× slower than a plain
-download of the same bytes. `s3_archive.seekable.open_seekable(client, bucket, key, if_match=etag)` is the canonical constructor: same
-object, tuned 1 MiB buffer, ~100 requests, within ~2× of a plain
-download.
+default 8 KiB buffer — one ranged GET per 8 KiB of body, tens of times
+slower than a plain download of the same bytes. `s3_archive.seekable.open_seekable(client, bucket, key, if_match=etag)` is the canonical constructor: same
+object, buffer tuned by `seekable._BUFFER_SIZE`, about a hundredfold fewer
+requests, and close to plain-download speed.
 
 ## Architecture
 
@@ -354,9 +364,9 @@ BSD 3-Clause — see [`LICENSE`](LICENSE).
 
 ### Copyleft in the runtime dependency tree
 
-s3-archive stays BSD-3-Clause. Its runtime dependency tree includes six
-weak-copyleft packages. All six are accepted as unmodified runtime
-dependencies:
+s3-archive stays BSD-3-Clause. Its runtime dependency tree includes the
+weak-copyleft packages below, each accepted as an unmodified runtime
+dependency:
 
 | Package           | License           | Pulled in by                     |
 | ----------------- | ----------------- | -------------------------------- |
@@ -367,7 +377,7 @@ dependencies:
 | `multivolumefile` | LGPLv2+           | `py7zr`                          |
 | `tqdm`            | MPL-2.0 AND MIT   | direct dependency (progress bar) |
 
-The five LGPL packages are accepted under the maintainer's licensing
+The LGPL packages are accepted under the maintainer's licensing
 rule for separately installed dependencies; `tqdm`'s MPL-2.0 arm was
 ratified by the operator on 2026-09-22 on the same reasoning. They are
 acceptable because each one is a separately installed PyPI
@@ -381,7 +391,7 @@ binary). Either calls for a new review, not an edit to the exemption
 list.
 
 `make licenses` enforces this on the runtime closure only (the dev and
-test groups never ship). It exempts the six packages above by name, not
+test groups never ship). It exempts the packages above by name, not
 by license string, so the next copyleft dependency fails the gate until
 someone makes a deliberate decision. To re-derive the tree, run
 `uv tree --no-default-groups`. `--no-dev` is not enough here, because

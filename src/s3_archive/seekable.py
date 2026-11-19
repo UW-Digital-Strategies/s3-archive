@@ -314,13 +314,7 @@ def _zip_member_chunks(
     )
     if check is None:
         return None
-    return IntegrityMismatch(
-        check=check,
-        expected_crc32=info.CRC,
-        actual_crc32=counter.crc32,
-        expected_size=info.file_size,
-        actual_size=counter.size,
-    )
+    return counter.mismatch(check, expected_crc32=info.CRC, expected_size=info.file_size)
 
 
 def _tar_member_chunks(tar: tarfile.TarFile, member: tarfile.TarInfo) -> Iterator[bytes]:

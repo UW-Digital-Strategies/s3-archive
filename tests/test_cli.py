@@ -1,11 +1,13 @@
 """End-to-end CLI smoke tests (with a patched S3 client + moto)."""
 
+import io
+import sys
 from unittest.mock import patch
 
 import pytest
 
 from s3_archive import resume
-from s3_archive.cli import _build_parser, _CLI_ERRORS, main
+from s3_archive.cli import _CLI_ERRORS, _build_parser, _byte_progress_bar, main
 
 from .conftest import (
     _extracted_keys,
@@ -229,6 +231,40 @@ class TestLsCommand:
         rc = main(["ls", "s3://src-bucket/file.rar"])
         assert rc == 2
         assert "Cannot detect archive format" in capsys.readouterr().err
+
+
+class TestStreamEncoding:
+    """main() writes UTF-8 whatever encoding the host locale gave the streams.
+
+    An ASCII-encoded stdout stands in for a non-UTF-8 host (what
+    PYTHONIOENCODING=ascii or an ISO-8859-1 locale hands the interpreter);
+    member names are user text, so `ls` must print them as written.
+    """
+
+    def test_ls_prints_non_ascii_member_names_on_an_ascii_stdout(self, patched_client, monkeypatch):
+        name = "보관/文書.txt"
+        _put_archive(patched_client, "src-bucket", "in/cjk.tar.gz", build_tar_gz({name: b"x"}))
+        raw = io.BytesIO()
+        ascii_stdout = io.TextIOWrapper(raw, encoding="ascii")
+        monkeypatch.setattr(sys, "stdout", ascii_stdout)
+
+        rc = main(["ls", "s3://src-bucket/in/cjk.tar.gz"])
+
+        ascii_stdout.flush()
+        assert rc == 0
+        assert name in raw.getvalue().decode("utf-8")
+
+    def test_stderr_keeps_its_error_handler(self, patched_client, monkeypatch):
+        # Only the encoding changes: stderr's backslashreplace (and a C
+        # locale's surrogateescape) must survive, or an undecodable member
+        # name would turn a warning into a crash.
+        ascii_stderr = io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="backslashreplace")
+        monkeypatch.setattr(sys, "stderr", ascii_stderr)
+
+        main(["ls", "s3://src-bucket/file.rar"])
+
+        assert ascii_stderr.encoding == "utf-8"
+        assert ascii_stderr.errors == "backslashreplace"
 
 
 class TestCreateCommand:
@@ -490,3 +526,48 @@ class TestParserSurface:
 
         assert exc.value.code == 2
         assert "--profile" in capsys.readouterr().err
+
+
+class _Stream(io.StringIO):
+    """A text stream whose `isatty()` answer the test chooses."""
+
+    def __init__(self, *, tty: bool) -> None:
+        super().__init__()
+        self._tty = tty
+
+    def isatty(self) -> bool:
+        return self._tty
+
+
+class TestProgressBarTtyGuard:
+    """The bar draws on stderr, so stderr's TTY-ness alone decides it.
+
+    A bar written to a pipe or log file is
+    carriage-return noise, and a guard that tested stdout would leave the
+    bar on for `s3-archive extract ... 2>log`.
+    """
+
+    @pytest.mark.parametrize(
+        ("stdout_tty", "stderr_tty", "disabled"),
+        [(True, True, False), (True, False, True), (False, True, False), (False, False, True)],
+        ids=["both_tty", "stderr_piped", "stdout_piped", "neither_tty"],
+    )
+    def test_follows_stderr_only(self, stdout_tty, stderr_tty, disabled):
+        with (
+            patch.object(sys, "stdout", _Stream(tty=stdout_tty)),
+            patch.object(sys, "stderr", _Stream(tty=stderr_tty)),
+        ):
+            bar = _byte_progress_bar("x", 10)
+            # Read before close(): tqdm sets `disable` on every closed bar.
+            was_disabled = bar.disable
+            bar.close()
+
+        assert was_disabled is disabled
+
+    def test_explicit_disable_wins_on_a_tty(self):
+        with patch.object(sys, "stderr", _Stream(tty=True)):
+            bar = _byte_progress_bar("x", 10, disable=True)
+            was_disabled = bar.disable
+            bar.close()
+
+        assert was_disabled is True

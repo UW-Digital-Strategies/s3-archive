@@ -841,6 +841,28 @@ class TestExtractResumeGzip:
         assert keys == [f"out/m{i}.bin" for i in range(4)]
         assert not any(resume.is_control_key(k) for k in keys)
 
+    def test_interrupted_run_keeps_marker_and_index_until_clean_completion(
+        self, s3_client, monkeypatch
+    ):
+        # Only a *clean* completion drops the resume artifacts: a run that dies
+        # mid-walk leaves both the .json marker and the .idx checkpoint, and
+        # the resume that then finishes removes both.
+        monkeypatch.setattr("s3_archive.gzip_seek.DEFAULT_INDEX_SPACING", self._SPACING)
+        files = self._big_files()
+        s3_client.put_object(Bucket="src-bucket", Key="in/a.tar.gz", Body=build_tar_gz(files))
+        etag = _src_etag(s3_client, "src-bucket", "in/a.tar.gz")
+        artifacts = {resume.control_key("out/", etag), resume.index_key("out/", etag)}
+        args = ("src-bucket", "in/a.tar.gz", "dest-bucket", "out/", "tar.gz")
+
+        with pytest.raises(RuntimeError, match="connection died"):
+            extract(s3_client, _DiesAfterUploads(s3_client, survive=2), *args, resume=True)
+        assert artifacts <= set(_extracted_keys(s3_client, "dest-bucket", "out/"))
+
+        extract(s3_client, s3_client, *args, resume=True)
+        assert _extracted_keys(s3_client, "dest-bucket", "out/") == [
+            f"out/m{i}.bin" for i in range(4)
+        ]
+
     def _resume_reading_only_last(self, s3_client, *, dest_prefix, files, with_index):
         """Set up an interrupted run (all but m3 done) and resume; return the source spy.
 

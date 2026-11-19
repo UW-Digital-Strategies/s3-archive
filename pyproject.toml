@@ -31,7 +31,7 @@ dev = [
     "vulture>=2.15",
     "bandit[toml]>=1.7",
     "detect-secrets>=1.5",
-    "fileplan==0.8.0",
+    "fileplan==0.11.0",
 ]
 test = [
     "pytest>=8.0",
@@ -58,20 +58,33 @@ version-file = "src/s3_archive/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/s3_archive"]
 
+# bash-completion's on-demand loader looks in share/bash-completion/completions/
+# for a file named after the command; installing it as wheel shared-data puts
+# it there for pip and uv installs. The sdist includes completions/ so a wheel
+# built from the sdist still finds the script. Regenerate with
+# `make completions`; tests/test_completion.py fails when it drifts from the
+# parser.
+[tool.hatch.build.targets.wheel.shared-data]
+"completions/s3-archive.bash" = "share/bash-completion/completions/s3-archive.bash"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/s3_archive", "completions"]
+
 [tool.uv]
-# Local-only tool: keep everything available after `uv sync` per PYTHON.md §6.
+# Local-only tool: keep everything available after `uv sync`.
 default-groups = ["dev", "test"]
 
 [tool.ruff]
 line-length = 100
+# Pinned rather than inferred from requires-python.
+target-version = "py312"
 # mdformat owns Markdown (`make format-docs`). ruff's preview formatter
 # rewrites Python fences inside .md, so excluding .md keeps the two
-# formatters from contending over docs. See PYTHON.md §14.
+# formatters from contending over docs.
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
-# Categories deliberately left out of `select` (PYTHON.md §14 asks for the
-# rationale in-file):
+# Categories deliberately left out of `select`, with the rationale kept here:
 # - TRY (tryceratops): almost entirely TRY003, "long message outside the
 #   exception class". The exceptions in s3_archive.exceptions carry per-call
 #   context — which key, which offset — in the message on purpose.
@@ -82,7 +95,7 @@ extend-exclude = ["*.md"]
 #   so no [tool.ruff.lint.pylint] section is carried for them.
 # `preview` stays off: its one rationale is PLR0904, which this PL-subset
 # select never reaches, and at 2026-09-23 it adds 24 findings (23 test-side,
-# mostly PLC2701 private imports) and nothing wanted (PYTHON.md §14).
+# mostly PLC2701 private imports) and nothing wanted.
 select = [
     "A",      # flake8-builtins
     "ARG",    # flake8-unused-arguments
@@ -93,6 +106,7 @@ select = [
     "ERA",    # eradicate
     "F",      # pyflakes
     "FBT",    # flake8-boolean-trap
+    "I",      # isort — `ruff format` does not order imports
     "N",      # pep8-naming
     "S",      # flake8-bandit
     "SIM",    # flake8-simplify
@@ -163,21 +177,27 @@ exclude = ["tests/", "test_*", "conftest.py"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "--strict-markers -ra --tb=short"
+# Every warning is a failure. Ignore a named
+# third-party warning here one at a time, with a comment saying why.
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 # `src`, not `src/s3_archive`: a second top-level package added under src/
-# would otherwise be measured at zero and never noticed (PYTHON-TESTING.md §6).
+# would otherwise be measured at zero and never noticed.
 source = ["src"]
 branch = true
-omit = ["*/__init__.py"]
+# No `*/__init__.py` omit: the package __init__ carries the `_version`
+# ImportError fallback, which is logic, not just imports.
+# `_version.py` is written by hatch-vcs at build time (gitignored), so it is
+# generated code, not ours to measure.
+omit = ["src/s3_archive/_version.py"]
 
 [tool.coverage.report]
-# `make test-cov` measured TOTAL 95.57% on 2026-09-23 (548 passed, 0 skipped;
-# 7-Zip as `7zz` and `xz` both on PATH). The floor is a floor, not a target:
-# it sits ~3 points below the measurement (as onboarding set 90 against 93) so
-# ordinary churn doesn't trip the gate while it stays a real assertion. When
-# coverage moves durably, move the floor with it and re-date this comment.
-fail_under = 92
+# The floor is a ratchet, not a target: it sits about three points under the
+# TOTAL line of `make test-cov` (run with 7-Zip and `xz` on PATH, so nothing
+# skips), so ordinary churn doesn't trip the gate while it stays a real
+# assertion. When the TOTAL moves durably, move the floor with it.
+fail_under = 93
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

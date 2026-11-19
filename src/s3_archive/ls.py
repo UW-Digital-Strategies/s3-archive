@@ -21,13 +21,10 @@ Nothing is ever staged on disk in any of these modes.
 import zipfile
 
 from s3_archive.exceptions import ArchiveReadError
-from s3_archive.log_config import get_logger
 from s3_archive.members import _apply_safe_keys, iter_archive_members
 from s3_archive.paths import safe_member_key
 from s3_archive.seekable import iter_zip_members_seekable, open_seekable
 from s3_archive.seven_z import list_seven_z_entries
-
-log = get_logger(__name__)
 
 
 def _format_size(num_bytes: int) -> str:

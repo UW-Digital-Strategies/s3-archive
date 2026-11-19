@@ -74,3 +74,19 @@ class TestIterObjects:
         results = list(iter_objects(client, "bucket", ""))
         assert len(results) == 2
         assert results[0]["Key"] == "a.txt"
+
+    def test_yields_first_page_before_fetching_the_next(self):
+        fetched: list[int] = []
+
+        def pages():
+            for n, keys in enumerate([["b.txt", "a.txt"], ["c.txt"]]):
+                fetched.append(n)
+                yield {"Contents": [{"Key": k, "Size": 1} for k in keys]}
+
+        client = MagicMock()
+        client.get_paginator.return_value.paginate.return_value = pages()
+        it = iter_objects(client, "bucket", "")
+        assert next(it)["Key"] == "b.txt"
+        assert fetched == [0]
+        assert [r["Key"] for r in it] == ["a.txt", "c.txt"]
+        assert fetched == [0, 1]

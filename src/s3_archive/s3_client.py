@@ -47,17 +47,28 @@ from botocore.config import Config as BotoConfig
 from s3_archive.exceptions import ConfigError
 
 _DEFAULT_POOL = 32
-_DEFAULT_PROFILE = "default"
+DEFAULT_PROFILE = "default"
 
 
-def _default_s3cfg_path() -> Path:
-    """s3cmd's default config location (default profile only)."""
-    return Path.home() / ".s3cfg"
+def s3cfg_path(profile: str) -> Path:
+    """The s3cmd INI location a profile reads from (and ``config`` writes to).
 
-
-def _profile_s3cfg_path(profile: str) -> Path:
-    """The s3cmd INI location for a *named* profile (``~/.s3cfg-<name>``)."""
+    The default profile maps to ``~/.s3cfg`` to stay compatible with
+    s3cmd; any named profile maps to ``~/.s3cfg-<name>``. This is the one
+    home of that rule: :mod:`s3_archive.config_cmd` writes where it says.
+    """
+    if profile == DEFAULT_PROFILE:
+        return Path.home() / ".s3cfg"
     return Path.home() / f".s3cfg-{profile}"
+
+
+def explicit_s3cmd_config() -> str | None:
+    """The ``$S3CMD_CONFIG`` override path, or ``None`` when unset or blank.
+
+    Part of the default profile's chain only; named profiles never
+    consult it. The one place the variable is read.
+    """
+    return os.environ.get("S3CMD_CONFIG", "").strip() or None
 
 
 def _from_s3cmd_config(cfg_path: str) -> tuple[str, str, str]:
@@ -136,8 +147,8 @@ def build_client(
 
 def _load_default_profile(max_pool_connections: int):
     """Default-profile resolution (the unchanged historical chain)."""
-    explicit_cfg = os.environ.get("S3CMD_CONFIG", "").strip()
-    if explicit_cfg:
+    explicit_cfg = explicit_s3cmd_config()
+    if explicit_cfg is not None:
         access, secret, endpoint = _from_s3cmd_config(explicit_cfg)
         return build_client(
             access_key=access,
@@ -146,7 +157,7 @@ def _load_default_profile(max_pool_connections: int):
             max_pool_connections=max_pool_connections,
         )
 
-    default_cfg = _default_s3cfg_path()
+    default_cfg = s3cfg_path(DEFAULT_PROFILE)
     if default_cfg.exists():
         access, secret, endpoint = _from_s3cmd_config(str(default_cfg))
         return build_client(
@@ -184,7 +195,7 @@ def _load_named_profile(profile: str, max_pool_connections: int):
     file per profile) and keeps an unrelated ``$S3CMD_CONFIG`` from
     accidentally hijacking a named profile.
     """
-    cfg_path = _profile_s3cfg_path(profile)
+    cfg_path = s3cfg_path(profile)
     if not cfg_path.exists():
         raise ConfigError(
             f"Profile {profile!r}: {cfg_path} does not exist. "
@@ -199,7 +210,7 @@ def _load_named_profile(profile: str, max_pool_connections: int):
     )
 
 
-def load_client(profile: str = _DEFAULT_PROFILE, max_pool_connections: int = _DEFAULT_POOL):
+def load_client(profile: str = DEFAULT_PROFILE, max_pool_connections: int = _DEFAULT_POOL):
     """Return a configured boto3 S3 client for *profile*.
 
     See the module docstring for the resolution order in each branch.
@@ -207,7 +218,7 @@ def load_client(profile: str = _DEFAULT_PROFILE, max_pool_connections: int = _DE
     :func:`client_for` (which adds a per-process cache) or pass
     ``profile="default"`` here for one-shot use.
     """
-    if profile == _DEFAULT_PROFILE:
+    if profile == DEFAULT_PROFILE:
         return _load_default_profile(max_pool_connections)
     return _load_named_profile(profile, max_pool_connections)
 
@@ -232,7 +243,7 @@ def client_for(profile: str | None):
     same object identity, which keeps a single connection pool per
     endpoint.
     """
-    key = profile if profile is not None else _DEFAULT_PROFILE
+    key = profile if profile is not None else DEFAULT_PROFILE
     cached = _client_cache.get(key)
     if cached is not None:
         return cached

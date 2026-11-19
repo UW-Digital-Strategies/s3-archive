@@ -304,13 +304,7 @@ def _checked_pipe_chunks(
     yield from counter.tap(_pipe_chunks(read_fd))
     if counter.crc32 == expected_crc32:
         return None
-    return IntegrityMismatch(
-        check="CRC-32",
-        expected_crc32=expected_crc32,
-        actual_crc32=counter.crc32,
-        expected_size=size,
-        actual_size=counter.size,
-    )
+    return counter.mismatch("CRC-32", expected_crc32=expected_crc32, expected_size=size)
 
 
 def _take_member_crcs(sz: py7zr.SevenZipFile) -> dict[str, int]:
@@ -539,7 +533,7 @@ def _drain_members(
     worker_error: list[BaseException],
     worker_thread: threading.Thread,
     expected_crcs: dict[str, int],
-) -> Iterator[ArchiveMember]:
+) -> Generator[ArchiveMember, None, None]:
     """Yield one :class:`ArchiveMember` per ``(filename, read_fd)`` on the queue.
 
     Runs until the worker's sentinel arrives, then joins the thread and
@@ -597,7 +591,7 @@ def iter_seven_z_members(
     targets: Collection[str] | None = None,
     if_match: str | None = None,
     tolerate_integrity_errors: bool = False,
-) -> Iterator[ArchiveMember]:
+) -> Generator[ArchiveMember, None, None]:
     """GET ``s3://bucket/key`` and yield one :class:`ArchiveMember` per file entry.
 
     Unlike the tar/zip iterators in :mod:`s3_archive.members` this opens

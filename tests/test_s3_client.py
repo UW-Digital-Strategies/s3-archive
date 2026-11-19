@@ -30,7 +30,8 @@ def _write_s3cfg(path, *, access_key: str = "AK", secret_key: str = "SK", host_b
         f"[default]\n"
         f"access_key = {access_key}\n"
         f"secret_key = {secret_key}\n"
-        f"host_base = {host_base}\n"
+        f"host_base = {host_base}\n",
+        encoding="utf-8",
     )
 
 
@@ -39,7 +40,7 @@ class TestLoadClientDefaultProfile:
 
     def test_reads_s3cmd_config_env(self, home_tmp, monkeypatch):
         path = home_tmp / "explicit.cfg"
-        _write_s3cfg(path, access_key="EX", secret_key="EX", host_base="explicit.example")
+        _write_s3cfg(path, host_base="explicit.example")
         monkeypatch.setenv("S3CMD_CONFIG", str(path))
 
         client = s3_client.load_client()

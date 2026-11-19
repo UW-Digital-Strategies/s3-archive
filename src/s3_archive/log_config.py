@@ -69,8 +69,8 @@ def resolve_level(*, verbose: bool) -> int:
     """Return the level for the ``s3_archive`` logger, fail-fast on a bad name.
 
     ``-v`` is shorthand for the DEBUG level and wins outright; otherwise
-    ``$LOG_LEVEL`` (the fleet-wide variable — LOGGING.md, "CLI / batch-runner
-    logging") names the level, and INFO applies when it is unset or empty.
+    ``$LOG_LEVEL`` names the level, and INFO applies when it is unset or
+    empty.
     An unrecognized name raises :class:`~s3_archive.exceptions.ConfigError`
     rather than silently falling back, so a typo in a cron environment is
     visible on the first run instead of quietly downgrading a long extract's
@@ -84,11 +84,10 @@ def resolve_level(*, verbose: bool) -> int:
 def resolve_root_level() -> int:
     """Return the root-logger level, fail-fast on a bad name.
 
-    ``$LOG_LEVEL_ROOT`` (LOGGING.md, "Two level knobs, one spelling") names
-    the level for everything that is not ``s3_archive`` — botocore, urllib3,
-    s3transfer — and WARNING applies when it is unset or empty. ``-v`` does
-    not touch it: per-file progress and boto's wire-level DEBUG are separate
-    asks. An unrecognized name raises
+    ``$LOG_LEVEL_ROOT`` names the level for everything that is not
+    ``s3_archive`` — botocore, urllib3, s3transfer — and WARNING applies
+    when it is unset or empty. ``-v`` does not touch it: per-file progress
+    and boto's wire-level DEBUG are separate asks. An unrecognized name raises
     :class:`~s3_archive.exceptions.ConfigError`, as for ``$LOG_LEVEL``.
     """
     return _level_from_env("LOG_LEVEL_ROOT", _DEFAULT_ROOT_LEVEL)

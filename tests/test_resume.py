@@ -9,6 +9,8 @@ from botocore.stub import Stubber
 from s3_archive import resume
 from s3_archive.integrity import IntegrityMismatch
 
+from .fixture_values import EMPTY_MD5
+
 
 class TestControlKey:
     """Control-object key construction + ETag sanitization."""
@@ -16,8 +18,8 @@ class TestControlKey:
     def test_strips_surrounding_quotes(self):
         # S3/RGW hand back ETags wrapped in literal double quotes.
         assert (
-            resume.control_key("out/", '"d41d8cd98f00b204e9800998ecf8427e"')
-            == "out/.s3-archive-resume.d41d8cd98f00b204e9800998ecf8427e.json"
+            resume.control_key("out/", f'"{EMPTY_MD5}"')
+            == f"out/.s3-archive-resume.{EMPTY_MD5}.json"
         )
 
     def test_keeps_multipart_etag_suffix(self):

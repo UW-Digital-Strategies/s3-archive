@@ -13,8 +13,9 @@ That single requirement drives most of the code shape below.
 
 ## Extract
 
-For both formats, the archive object is fetched from S3 with one
-`get_object` call, whose `Body` is a `botocore.response.StreamingBody`.
+For the forward-only formats (the tar family and zip), the archive object
+is fetched from S3 with one `get_object` call, whose `Body` is a
+`botocore.response.StreamingBody`.
 That body is then handed to a streaming decoder, which yields one
 member at a time, and each member is pushed to S3 via
 `upload_fileobj`.
@@ -62,7 +63,7 @@ tar and zip both decode strictly forward, so the sequential `Body`
 read can survive an isolated mid-stream connection drop
 (`ResponseStreamingError` / `IncompleteRead` — the class of failure
 Ceph RadosGW throws on long transfers). Instead of the raw `Body`,
-the decoder reads from `members._resumable_body_chunks`, which tracks
+the decoder reads from `retry.resumable_body_chunks`, which tracks
 the byte offset it has already emitted and, on a transient error,
 re-issues `get_object(Range="bytes=<pos>-")` and continues. The
 decoder sees one continuous, correct byte stream and never learns the
@@ -75,8 +76,8 @@ progress: any successful chunk zeroes the counter, so a long extract
 that survives several isolated hiccups over hours isn't killed by a
 total-attempt cap, while a genuinely dead endpoint still gives up
 after `retry_max_attempts`. This mirrors the ranged-GET retry on the
-seekable 7z path (`seven_z.SeekableS3Object`); both share one policy
-in `s3_archive.retry`.
+seekable path (`seekable.SeekableS3Object`, used by 7z); both share one
+policy in `s3_archive.retry`.
 
 ### Adapter for non-seekable sources
 
@@ -161,10 +162,11 @@ the front references a metadata block at the tail, and the body
 decoder pipeline (LZMA2, BCJ, etc.) lives in that tail header. So
 unlike tar/zip, the 7z path needs a *seekable* view of the archive.
 
-`s3_archive.seven_z.SeekableS3Object` provides one as an
-`io.RawIOBase` over ranged `GetObject` calls, with a one-time
-~4 MB tail prefetch held in memory for the duration of the extract.
-That gets wrapped in `io.BufferedReader` (1 MB buffer) and handed
+`s3_archive.seekable.SeekableS3Object` provides one as an
+`io.RawIOBase` over ranged `GetObject` calls, with a one-time tail
+prefetch (`seekable._TAIL_PREFETCH_BYTES`) held in memory for the
+duration of the extract. `seekable.open_seekable()` wraps it in an
+`io.BufferedReader` sized by `seekable._BUFFER_SIZE`, and that is handed
 to `py7zr.SevenZipFile`. The buffer coalesces the chatty
 field-by-field reads of the SignatureHeader; the tail prefetch
 keeps the trailing header in RAM so the parse doesn't round-trip.

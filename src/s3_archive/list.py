@@ -26,25 +26,20 @@ def list_objects(
     If *sort* is ``True`` the result is sorted by ``Key``; otherwise
     boto3's natural pagination order is preserved.
     """
-    return list(iter_objects(client, bucket, prefix, sort=sort))
+    rows = list(iter_objects(client, bucket, prefix))
+    if sort:
+        rows.sort(key=lambda r: r["Key"])
+    return rows
 
 
-def iter_objects(
-    client,
-    bucket: str,
-    prefix: str = "",
-    *,
-    sort: bool = False,
-) -> Iterator[dict]:
+def iter_objects(client, bucket: str, prefix: str = "") -> Iterator[dict]:
     """Streaming variant of :func:`list_objects`.
 
-    Yields one dict per object. ``sort=True`` necessarily materializes
-    the full list first — fine for the modest sizes ``create`` deals
-    with, but ``create`` callers that want true streaming should pass
-    ``sort=False``.
+    Yields one dict per object, in boto3's pagination order, as each
+    page arrives; it never holds more than the current page. Callers
+    that need key order use :func:`list_objects` with ``sort=True``.
     """
     paginator = client.get_paginator("list_objects_v2")
-    rows: list[dict] = []
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
@@ -60,10 +55,4 @@ def iter_objects(
                 "LastModified": obj.get("LastModified"),
                 "RelativePath": rel,
             }
-            if sort:
-                rows.append(row)
-            else:
-                yield row
-    if sort:
-        rows.sort(key=lambda r: r["Key"])
-        yield from rows
+            yield row

@@ -18,11 +18,16 @@ from s3_archive.manifest import build_manifest_tar_fileobj
 from s3_archive.stream_decode import TAR_FAMILY_FORMATS, iter_zip_file_entries, open_tar_stream
 from s3_archive.url import detect_format
 
-from .conftest import build_tar
+from .conftest import TarWriteMode, build_tar
 
 _FILES = {"a.txt": b"alpha", "sub/b.txt": b"bravo"}
 
-_BUILD_MODE = {"tar": "w", "tar.gz": "w:gz", "tar.bz2": "w:bz2", "tar.xz": "w:xz"}
+_BUILD_MODE: dict[str, TarWriteMode] = {
+    "tar": "w",
+    "tar.gz": "w:gz",
+    "tar.bz2": "w:bz2",
+    "tar.xz": "w:xz",
+}
 
 
 def _tar_bytes(fmt: str) -> bytes:

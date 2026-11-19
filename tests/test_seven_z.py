@@ -5,6 +5,7 @@ import lzma
 import os
 import queue
 import random
+import sys
 import threading
 import time
 import zlib
@@ -13,10 +14,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import botocore.exceptions
+import brotli
 import py7zr
 import py7zr.compressor
 import pytest
-from py7zr.exceptions import ArchiveError, UnsupportedCompressionMethodError
+from py7zr.exceptions import ArchiveError, CrcError, UnsupportedCompressionMethodError
 
 from s3_archive.constants import CHUNK_SIZE
 from s3_archive.exceptions import ArchiveReadError, ETagMismatchError
@@ -42,6 +44,25 @@ from .conftest import (
     build_7z_py7zr,
     incompressible_bytes,
 )
+
+# The zstd module py7zr decodes with, chosen the way py7zr.compressor
+# chooses it, so the expected exception is the class the codec raises.
+if sys.version_info >= (3, 14):
+    from compression import zstd
+else:
+    from backports import zstd
+
+
+def _bare_decompressor() -> py7zr.compressor.SevenZipDecompressor:
+    """An uninitialised decompressor to bind `_get_lzma_decompressor` to.
+
+    The method builds a chain from its *coders* argument alone and never
+    reads instance state, so `__init__` (which needs a real Folder) is
+    skipped.
+    """
+    cls = py7zr.compressor.SevenZipDecompressor
+    return cls.__new__(cls)
+
 
 # Every (builder, flavor) pair. The 7-Zip-CLI builds skip when no CLI is on
 # PATH; the py7zr builds never do, so the reader is exercised either way.
@@ -392,7 +413,7 @@ class TestGeneratorLifecycle:
             with pytest.raises(ArchiveReadError) as exc_info:
                 for member in walk:
                     member.drain()
-        assert isinstance(exc_info.value.cause, py7zr.exceptions.CrcError)
+        assert isinstance(exc_info.value.cause, CrcError)
 
     def test_refuses_when_py7zr_would_extract_in_parallel(self, monkeypatch):
         """The ``_filePassed`` guard fails fast, and closes what it opened.
@@ -451,8 +472,8 @@ class TestCorruptCompressedBody:
             # bz2 raises a bare OSError — the reason the wrap sits on the
             # in-memory decode step, not on exception type.
             ("bzip2", OSError),
-            ("zstd", py7zr.compressor.zstd.ZstdError),
-            ("brotli", py7zr.compressor.brotli.error),
+            ("zstd", zstd.ZstdError),
+            ("brotli", brotli.error),
         ],
     )
     def test_codec_error_is_archive_read_error(self, flavor, codec_error):
@@ -568,12 +589,12 @@ class TestNativeDecoderFallback:
         assert py7zr.compressor.SevenZipDecompressor._get_lzma_decompressor is before
 
     def test_chain_stdlib_rejects_gets_the_native_decoder(self):
-        chain = self._get(None, _DELTA_ONLY, 4)
+        chain = self._get(_bare_decompressor(), _DELTA_ONLY, 4)
         assert chain.decompress(b"\x01\x01\x01\x01") == b"\x01\x02\x03\x04"
 
     def test_chain_nobody_can_decode_reraises_the_original(self):
         with pytest.raises(UnsupportedCompressionMethodError):
-            self._get(None, _MULTI_STREAM, 4)
+            self._get(_bare_decompressor(), _MULTI_STREAM, 4)
 
 
 class TestSeekableS3ObjectRetry:

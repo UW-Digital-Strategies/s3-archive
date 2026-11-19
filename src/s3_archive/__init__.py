@@ -3,7 +3,6 @@
 from s3_archive.create import create, create_tar_gz, create_zip
 from s3_archive.exceptions import ConfigError, ETagMismatchError, UnsupportedArchiveFormatError
 from s3_archive.extract import ExtractReport, extract, extract_with_report
-from s3_archive.integrity import IntegrityMismatch
 from s3_archive.hashing import (
     HashingTap,
     TripleHash,
@@ -12,6 +11,7 @@ from s3_archive.hashing import (
     stream_hash_object,
     triple_hash,
 )
+from s3_archive.integrity import IntegrityMismatch
 from s3_archive.iter import IterableFileobj, NonSeekableReader, PipeReader
 from s3_archive.list import list_objects
 from s3_archive.ls import list_archive
@@ -27,7 +27,7 @@ except ImportError:
     # Working from a source tree where the build hook hasn't run yet.
     __version__ = "0.0.0+unknown"
 
-REPO_URL = "https://github.com/borwickatuw/s3-archive"
+REPO_URL = "https://github.com/UW-Digital-Strategies/s3-archive"
 
 __all__ = [
     "REPO_URL",

@@ -87,11 +87,11 @@ point where "everything before here is durably done" is a **member boundary** �
 a mid-member checkpoint would be meaningless (there's nothing to resume a
 half-uploaded object from).
 
-The gzip `.idx` is therefore PUT at member boundaries, at most once per ~1 GB
-of uncompressed progress (so millions of tiny files don't each trigger a
-write). A member larger than that interval delays its checkpoint until it
-finishes — so the real re-processing bound on resume is
-**`max(~1 GB, largest in-flight member)`**, not a flat 1 GB. (The Tier-A
+The gzip `.idx` is therefore PUT at member boundaries, at most once per
+`gzip_seek.DEFAULT_INDEX_SPACING` bytes of uncompressed progress (so millions
+of tiny files don't each trigger a write). A member larger than that interval
+delays its checkpoint until it finishes — so the real re-processing bound on
+resume is **`max(spacing, largest in-flight member)`**, not a flat spacing. (The Tier-A
 formats and xz persist no index, so there's nothing to checkpoint; their
 marker is only rewritten to record integrity warnings.)
 
@@ -134,11 +134,12 @@ warnings.
 
 **`.tar.gz`.** `indexed_gzip` reads + seeks over our fileobj
 (`IndexedGzipFile(fileobj=…, drop_handles=False)`) and exports/imports a small
-`zran` seek index (a 32 KB decompressor-window snapshot every ~1 GB). On the
-first resumable run it accrues points during the forward decode and PUTs the
-`.idx` at member boundaries; on resume it imports the `.idx` and seeks to a
-late member, re-decoding ≤ ~1 GB instead of re-downloading the whole source.
-`indexed_gzip` is a core dependency (zlib license, abi3 wheels 3.11–3.14),
+`zran` seek index (a 32 KB decompressor-window snapshot every
+`DEFAULT_INDEX_SPACING` bytes). On the first resumable run it accrues points
+during the forward decode and PUTs the `.idx` at member boundaries; on resume
+it imports the `.idx` and seeks to a late member, re-decoding only from the
+last checkpoint instead of re-downloading the whole source.
+`indexed_gzip` is a core dependency (zlib license, abi3 wheels),
 chosen over an optional extra so resume just works on a long unattended job,
 and over `rapidgzip` for wheel breadth + license.
 

@@ -29,7 +29,6 @@ from s3_archive.seekable import iter_zip_members_seekable, open_seekable
 
 from .conftest import build_stored_dd_zip, build_tar, build_zip, build_zip_with_corrupt_member
 
-
 _FILES = {
     "alpha.txt": b"alpha contents\n",
     "nested/beta.bin": b"\x00\x01\x02\x03\x04" * 100,
@@ -569,6 +568,7 @@ class _FlakyBody:
             # can't spin. In practice the generator discards a dropped
             # body and reopens, so this read is never called again.
             self._drop_after = None
+            assert self._exc_factory is not None, "drop_after needs an exc_factory"
             raise self._exc_factory()
         if size is None or size < 0:
             size = len(self._data) - self._pos

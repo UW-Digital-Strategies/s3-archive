@@ -87,7 +87,7 @@ class ExtractEvent:
     """
 
     # Read by s3-bagit's progress bar (src/s3_bagit/cli.py), outside this repo.
-    # re-evaluate-by: next comprehensive review.
+    # re-evaluate-by: s3-bagit's cli.py stops reading event.member (docs/PYSMELLY.md).
     # pysmelly: ignore[write-only-attributes]  # noqa: ERA001
     member: str
     bytes_transferred: int
@@ -249,10 +249,11 @@ def _upload_member(
         dst_client.upload_fileobj(body, dest_bucket, dest_key, Callback=callback)
 
 
-# Complexity 13: the format dispatch, the --resume/--dry-run modes, and
+# Complexity 15: the format dispatch, the --resume/--dry-run modes, and
 # the streaming→seekable fallback each add branches to one linear walk.
-# Parked at onboarding (2026-08-13); re-evaluate-by: 2026-11 review.
-# Ledger: docs/HOWTO-SIMPLIFY.md.
+# Parked at onboarding (2026-08-13); re-evaluated 2026-11-17, still parked
+# (grew 13 -> 15, so decompose as its own change, not folded into other
+# work); re-evaluate-by: 2027-05 review. Ledger: docs/HOWTO-SIMPLIFY.md.
 def extract_with_report(  # noqa: C901
     src_client,
     dst_client,
@@ -454,14 +455,7 @@ def extract_with_report(  # noqa: C901
             report=report,
         )
 
-    # Clean completion of a resume run: drop the control marker (and, for
-    # gzip, its seek-index companion) so only an *interrupted* run leaves
-    # artifacts behind. Both keys are None on the non-resume path and in
-    # dry-run, so nothing is deleted there.
-    if walk.ledger.marker is not None:
-        resume_mod.delete_control_file(dst_client, dest_bucket, walk.ledger.marker.key)
-    if walk.index_key is not None:
-        resume_mod.delete_index_object(dst_client, dest_bucket, walk.index_key)
+    walk.complete(dst_client, dest_bucket)
 
     log.info(
         "extract %s: %d files%s",
@@ -574,6 +568,9 @@ class _ResumeMarker:
             integrity_warnings=integrity_warnings,
         )
 
+    def delete(self, dst_client, dest_bucket: str) -> None:
+        resume_mod.delete_control_file(dst_client, dest_bucket, self.key)
+
 
 @dataclass(frozen=True)
 class _ResumeLedger:
@@ -610,6 +607,16 @@ class _Walk:
     ledger: _ResumeLedger
     # gzip's seek-index companion, deleted on clean completion; None otherwise.
     index_key: str | None = None
+
+    def complete(self, dst_client, dest_bucket: str) -> None:
+        # Clean completion of a resume run: drop the control marker (and, for
+        # gzip, its seek-index companion) so only an *interrupted* run leaves
+        # artifacts behind. Both are None on the non-resume path and in
+        # dry-run, so nothing is deleted there.
+        if self.ledger.marker is not None:
+            self.ledger.marker.delete(dst_client, dest_bucket)
+        if self.index_key is not None:
+            resume_mod.delete_index_object(dst_client, dest_bucket, self.index_key)
 
 
 def _begin_resume(

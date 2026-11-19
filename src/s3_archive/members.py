@@ -332,13 +332,7 @@ class _StreamingZipWalk:
                     f"directory needed to continue past it is unreadable: {cd_exc}",
                     cause=cd_exc,
                 ) from cd_exc
-            return IntegrityMismatch(
-                check=check,
-                expected_crc32=info.CRC,
-                actual_crc32=counter.crc32,
-                expected_size=info.file_size,
-                actual_size=counter.size,
-            )
+            return counter.mismatch(check, expected_crc32=info.CRC, expected_size=info.file_size)
         return None
 
 

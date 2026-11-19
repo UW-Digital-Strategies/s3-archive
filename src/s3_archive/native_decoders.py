@@ -60,9 +60,6 @@ class CopyDecoder:
     spins forever if the chain returns empty without consuming input.
     """
 
-    # py7zr's chain-element API: SevenZipDecompressor calls it, not this repo.
-    # re-evaluate-by: next comprehensive review.
-    # pysmelly: ignore[trivial-wrappers]  # noqa: ERA001
     def decompress(
         self,
         data: bytes | bytearray | memoryview,

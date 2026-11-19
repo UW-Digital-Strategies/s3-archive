@@ -18,7 +18,6 @@ import pytest
 from stream_unzip import NotStreamUnzippable
 
 from s3_archive.exceptions import UnsupportedArchiveFormatError, ZipNotStreamableError
-from .conftest import build_stored_dd_zip
 from s3_archive.manifest import (
     TAP_SUPPORTED_FORMATS,
     TAR_FAMILY_FORMATS,
@@ -29,6 +28,16 @@ from s3_archive.manifest import (
     build_manifest_zip_seekable,
     zip_central_directory_from_path,
     zip_central_directory_from_s3,
+)
+
+from .conftest import build_stored_dd_zip
+from .fixture_values import (
+    GOLDEN_BAGIT_MD5,
+    GOLDEN_BAGIT_SHA1,
+    GOLDEN_BAGIT_SHA256,
+    HELLO_MD5,
+    HELLO_SHA1,
+    HELLO_SHA256,
 )
 
 
@@ -44,9 +53,9 @@ class TestEntryFromChunks:
         entry = _entry_from_chunks("a.txt", iter([b"hello"]), "2024-05-04T12:00:00Z", None)
         assert entry.key == "a.txt"
         assert entry.size == 5
-        assert entry.md5 == "5d41402abc4b2a76b9719d911017c592"
-        assert entry.sha1 == "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
-        assert entry.sha256 == ("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        assert entry.md5 == HELLO_MD5
+        assert entry.sha1 == HELLO_SHA1
+        assert entry.sha256 == HELLO_SHA256
         assert entry.mtime == "2024-05-04T12:00:00Z"
 
     def test_observer_sees_the_key_and_feeds_the_hash_unchanged(self):
@@ -94,9 +103,9 @@ class TestEntryFromChunks:
         assert (entry.key, entry.size, entry.md5, entry.sha1, entry.sha256, entry.mtime) == (
             "bagit.txt",
             19,
-            "9e28fcefb9ca3530e043b6334904fd7c",
-            "922a2b6762717eabcade85ba446f13b1d861f250",
-            "02d3510b13d2351380e0509feddfd17acdcb605d82c79e8e61a3ff1f1cdb5684",
+            GOLDEN_BAGIT_MD5,
+            GOLDEN_BAGIT_SHA1,
+            GOLDEN_BAGIT_SHA256,
             "2024-05-04T12:00:00Z",
         )
 

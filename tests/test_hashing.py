@@ -19,33 +19,33 @@ from s3_archive.hashing import (
     triple_hash,
 )
 
-# Known-vector test fixtures
-_HELLO = b"hello"
-_HELLO_MD5 = "5d41402abc4b2a76b9719d911017c592"
-_HELLO_SHA1 = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
-_HELLO_SHA256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
-
-_EMPTY_MD5 = "d41d8cd98f00b204e9800998ecf8427e"
-_EMPTY_SHA1 = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-_EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+from .fixture_values import (
+    EMPTY_MD5,
+    EMPTY_SHA1,
+    EMPTY_SHA256,
+    HELLO,
+    HELLO_MD5,
+    HELLO_SHA1,
+    HELLO_SHA256,
+)
 
 
 class TestTripleHash:
     def test_empty(self):
         result = triple_hash(iter([]))
         assert result == TripleHash(
-            md5=_EMPTY_MD5,
-            sha1=_EMPTY_SHA1,
-            sha256=_EMPTY_SHA256,
+            md5=EMPTY_MD5,
+            sha1=EMPTY_SHA1,
+            sha256=EMPTY_SHA256,
             size=0,
         )
 
     def test_known_vector_single_chunk(self):
-        result = triple_hash([_HELLO])
+        result = triple_hash([HELLO])
         assert result.size == 5
-        assert result.md5 == _HELLO_MD5
-        assert result.sha1 == _HELLO_SHA1
-        assert result.sha256 == _HELLO_SHA256
+        assert result.md5 == HELLO_MD5
+        assert result.sha1 == HELLO_SHA1
+        assert result.sha256 == HELLO_SHA256
 
     def test_chunked_equals_single_blob(self):
         data = b"the quick brown fox jumps over the lazy dog"
@@ -76,17 +76,17 @@ class TestMultiHash:
         assert consumed == []
 
     def test_single_algorithm(self):
-        result = multi_hash([_HELLO], ["sha256"])
-        assert result == {"sha256": _HELLO_SHA256}
+        result = multi_hash([HELLO], ["sha256"])
+        assert result == {"sha256": HELLO_SHA256}
 
     def test_multiple_algorithms_single_pass(self):
         # md5 + sha256 over "hello"
-        result = multi_hash([_HELLO], ["md5", "sha256"])
-        assert result == {"md5": _HELLO_MD5, "sha256": _HELLO_SHA256}
+        result = multi_hash([HELLO], ["md5", "sha256"])
+        assert result == {"md5": HELLO_MD5, "sha256": HELLO_SHA256}
 
     def test_sha512_supported(self):
-        result = multi_hash([_HELLO], ["sha512"])
-        assert result == {"sha512": hashlib.sha512(_HELLO).hexdigest()}
+        result = multi_hash([HELLO], ["sha512"])
+        assert result == {"sha512": hashlib.sha512(HELLO).hexdigest()}
 
 
 class TestBodyChunks:
@@ -105,9 +105,9 @@ class TestBodyChunks:
 
 class TestStreamHashObject:
     def test_round_trip(self, s3_client):
-        s3_client.put_object(Bucket="src-bucket", Key="obj", Body=_HELLO)
+        s3_client.put_object(Bucket="src-bucket", Key="obj", Body=HELLO)
         digests = stream_hash_object(s3_client, "src-bucket", "obj", ["md5", "sha256"])
-        assert digests == {"md5": _HELLO_MD5, "sha256": _HELLO_SHA256}
+        assert digests == {"md5": HELLO_MD5, "sha256": HELLO_SHA256}
 
 
 class TestHashingTap:
@@ -173,18 +173,18 @@ class TestHashingTap:
         assert tap.hexdigests()["sha256"] == hashlib.sha256(b"abcdefghi").hexdigest()
 
     def test_custom_algorithms(self):
-        tap = HashingTap(iter([_HELLO]), algorithms=("sha256",))
+        tap = HashingTap(iter([HELLO]), algorithms=("sha256",))
         tap.drain()
-        assert tap.hexdigests() == {"sha256": _HELLO_SHA256}
+        assert tap.hexdigests() == {"sha256": HELLO_SHA256}
 
     def test_finalize_triple(self):
-        tap = HashingTap(iter([_HELLO]))
+        tap = HashingTap(iter([HELLO]))
         tap.drain()
         result = tap.finalize_triple()
         assert result == TripleHash(
-            md5=_HELLO_MD5,
-            sha1=_HELLO_SHA1,
-            sha256=_HELLO_SHA256,
+            md5=HELLO_MD5,
+            sha1=HELLO_SHA1,
+            sha256=HELLO_SHA256,
             size=5,
         )
 
