@@ -143,7 +143,7 @@ class TestMarkerIntegrityWarnings:
             resume.read_control_file(s3_client, "dest-bucket", "out/m.json")
 
 
-# The two resume reads whose sentinel means *absence* (PYTHON §19): each
+# The two resume reads whose sentinel means *absence*: each
 # case is (function, the absence sentinel).
 _ABSENCE_READS = [
     pytest.param(resume.read_control_file, None, id="read_control_file"),
